@@ -751,7 +751,15 @@ window.addEventListener("resize", () => {
         ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.textBaseline = 'bottom';
-                 const hud = `draw: hold left mouse, tier: ${currentTier}, brush: ${baseBrushWidthPixels.toFixed(1)}px, m/px: ${metersPerPixel().toExponential(2)}`;
+        
+        // Calculate storage usage for display
+        const totalStrokes = STROKES.reduce((sum, tier) => sum + tier.length, 0);
+        const totalPoints = STROKES.reduce((sum, tier) => 
+          sum + tier.reduce((tierSum, stroke) => tierSum + stroke.points.length, 0), 0);
+        const jsonString = JSON.stringify(STROKES);
+        const storageKB = (new Blob([jsonString]).size / 1024).toFixed(1);
+        
+        const hud = `draw: hold left mouse, tier: ${currentTier}, brush: ${baseBrushWidthPixels.toFixed(1)}px, m/px: ${metersPerPixel().toExponential(2)} | strokes: ${totalStrokes}, points: ${totalPoints}, storage: ${storageKB}KB`;
         ctx.fillText(hud, 12, canvas.height - 10);
         ctx.restore();
       };
