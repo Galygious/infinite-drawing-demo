@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scales of the Universe</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+      color: white;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    canvas {
+      display: block;
+      background: #000;
+    }
+    #info-panel {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      padding: 15px;
+      background: rgba(0, 0, 0, 0.75);
+      border-radius: 8px;
+      max-width: 400px;
+      z-index: 1000;
+      border: 1px solid #444;
+      backdrop-filter: blur(5px);
+    }
+    #info-panel h2 {
+        margin: 0 0 5px 0;
+        color: #00aaff;
+        font-size: 1.2em;
+    }
+    #info-panel p {
+        margin: 0 0 10px 0;
+        font-size: 0.9em;
+        line-height: 1.4;
+    }
+    #info-panel .scale-info {
+        font-family: monospace;
+        font-size: 1em;
+        color: #ddd;
+        margin-bottom: 15px;
+    }
+    #info-panel .theoretical {
+        color: #ff9900;
+        font-weight: bold;
+        display: block;
+        margin-top: 10px;
+    }
+    #zoom-display {
+        position: absolute;
+        bottom: 20px;
+        right: 20px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.75);
+        color: white;
+        font-family: monospace;
+        font-size: 14px;
+        border-radius: 5px;
+        z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="info-panel">
+  <h2 id="info-title">Welcome!</h2>
+  <div id="info-scale"></div>
+  <p id="info-desc">Scroll with your mouse wheel to zoom through the scales of the universe. Images are loading in the background from Wikimedia Commons.</p>
+</div>
+
+<div id="zoom-display">Zoom: 1.00e+0x</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let zoom = 600;
+const zoomMin = 1e-24; 
+const zoomMax = 5.79e37;
+
+// --- UTILITY FUNCTIONS ---
+function formatSize(meters) {
+    const METRIC_UNITS = [
+        { exp: 24, name: "Yottameters" }, { exp: 21, name: "Zettameters" }, 
+        { exp: 18, name: "Examegameters" }, { exp: 15, name: "Petameters" },
+        { exp: 12, name: "Terameters" }, { exp: 9, name: "Gigameters" },
+        { exp: 6, name: "Megameters" }, { exp: 3, name: "Kilometers" },
+        { exp: 0, name: "Meters" }, { exp: -2, name: "Centimeters" },
+        { exp: -3, name: "Millimeters" }, { exp: -6, name: "Micrometers" },
+        { exp: -9, name: "Nanometers" }, { exp: -12, name: "Picometers" },
+        { exp: -15, name: "Femtometers" }, { exp: -18, name: "Attometers" },
+        { exp: -21, name: "Zeptometers" }, { exp: -24, name: "Yoctometers" },
+    ];
+
+    const TEXAS_WIDTH = 1.244e6; // meters
+    const EARTH_DIAMETER = 1.2742e7; // meters
+    const SUN_DIAMETER = 1.39e9; // meters
+    const LIGHT_YEAR = 9.461e15; // meters
+    
+    const exactValueStr = `(${meters.toExponential(2)} m)`;
+
+    if (meters > LIGHT_YEAR * 1000) {
+        const lightYears = meters / LIGHT_YEAR;
+        return `~${lightYears.toLocaleString(undefined, {maximumFractionDigits: 0})} Light Years ${exactValueStr}`;
+    }
+    if (meters > SUN_DIAMETER * 100) {
+        return `~${(meters / SUN_DIAMETER).toLocaleString(undefined, {maximumFractionDigits: 2})} Suns ${exactValueStr}`;
+    }
+     if (meters > EARTH_DIAMETER * 100) {
+        return `~${(meters / EARTH_DIAMETER).toLocaleString(undefined, {maximumFractionDigits: 2})} Earths ${exactValueStr}`;
+    }
+    if (meters > TEXAS_WIDTH * 10) {
+        return `~${(meters / TEXAS_WIDTH).toLocaleString(undefined, {maximumFractionDigits: 2})} Texases ${exactValueStr}`;
+    }
+    
+    for (const unit of METRIC_UNITS) {
+        if (meters >= Math.pow(10, unit.exp)) {
+            const value = meters / Math.pow(10, unit.exp);
+            return `~${value.toLocaleString(undefined, {maximumFractionDigits: 2})} ${unit.name} ${exactValueStr}`;
+        }
+    }
+
+    return `~${meters.toExponential(2)} meters`; // Fallback for very small numbers
+}
+
+// --- DATA SOURCE ---
+async function getWikimediaImageUrl(searchTerm, desiredWidth = 1024) {
+    const endpoint = `https://commons.wikimedia.org/w/api.php`;
+    const params = new URLSearchParams({
+        action: 'query',
+        generator: 'search',
+        gsrsearch: `${searchTerm} filetype:jpg|png|jpeg`,
+        gsrnamespace: 6,
+        gsrlimit: 1,
+        prop: 'imageinfo',
+        iiprop: 'url',
+        iiurlwidth: desiredWidth,
+        format: 'json',
+        origin: '*'
+    });
+
+    try {
+        const response = await fetch(`${endpoint}?${params}`);
+        if (!response.ok) throw new Error(`Network response was not ok for ${searchTerm}`);
+        
+        const data = await response.json();
+        if (data.query && data.query.pages) {
+            const pages = data.query.pages;
+            const firstPageId = Object.keys(pages)[0];
+            if (firstPageId && pages[firstPageId].imageinfo) {
+                return pages[firstPageId].imageinfo[0].thumburl;
+            }
+        }
+        console.warn(`No image found on Wikimedia for: ${searchTerm}`);
+        return null;
+    } catch (error) {
+        console.error(`Error fetching Wikimedia image for "${searchTerm}":`, error);
+        return null;
+    }
+}
+
+
+const SCALES = [
+    { exp: 26, base_size: 9.3, label_size: 9.3, label: "Observable Universe", searchTerm: "Planck satellite CMB", description: "The final scale; the entire known cosmos. The image is the Cosmic Microwave Background (CMB), the afterglow of the Big Bang.", isTheoretical: false },
+    { exp: 25, base_size: 1.0, label_size: 1.0, label: "Cosmic Filaments", searchTerm: "Giant grb ring.png", description: "At this scale, galaxies form immense chains (filaments) separated by vast empty regions (voids), creating the large-scale structure of the universe.", isTheoretical: false },
+    { exp: 24, base_size: 1.0, label_size: 1.0, label: "Virgo Supercluster", searchTerm: "Virgo Supercluster map", description: "The massive cluster of galaxies of which our Local Group is just a small, outlying member.", isTheoretical: false },
+    { exp: 22, base_size: 1.0, label_size: 1.0, label: "Local Group", searchTerm: "Local Group of galaxies", description: "Our galactic neighborhood, dominated by our Milky Way and the Andromeda Galaxy, along with dozens of smaller dwarf galaxies.", isTheoretical: false },
+    { exp: 21, base_size: 1.0, label_size: 1.0, label: "Milky Way Galaxy", searchTerm: "Milky Way Galaxy artist's impression", description: "Our home galaxy, a spiral disk containing over 200 billion stars, including our Sun.", isTheoretical: false },
+    { exp: 18, base_size: 4.0, label_size: 4.0, label: "Pleiades Star Cluster", searchTerm: "Pleiades star cluster photograph", description: "A famous, recognizable cluster of young, hot, bright stars, easily visible in the night sky.", isTheoretical: false },
+    { exp: 16, base_size: 4.2, label_size: 4.2, label: "Distance to Nearest Star", searchTerm: "Alpha Centauri system", description: "The scale of interstellar space. Proxima Centauri, the nearest star to our Sun, is 4.24 light-years away.", isTheoretical: false },
+    { exp: 13, base_size: 1.0, label_size: 1.0, label: "The Solar System", searchTerm: "Solar system orrery outer planets.png", description: "The full scale of our solar system, encompassing the orbits of all planets out to Neptune and the Kuiper Belt.", isTheoretical: false },
+    { exp: 11, base_size: 2.5, label_size: 1.5, label: "Earth's Orbit", searchTerm: "Solar Orbiter's location on 22 March 2023 ESA503897.png", description: "The distance from the Earth to the Sun is 1 Astronomical Unit (AU), the fundamental yardstick for measuring interplanetary distances.", isTheoretical: false },
+    { exp: 9, base_size: 1.4, label_size: 1.4, label: "The Sun", searchTerm: "The Sun photograph SDO", description: "Our parent star. Its diameter is about 1.39 million km, large enough to fit over one million Earths inside.", isTheoretical: false },
+    { exp: 8, base_size: 3.8, label_size: 3.8, label: "Earth-Moon System", searchTerm: "Saturn and the Earth-Moon Distance", description: "The average distance to the Moon is about 384,400 km. An image showing the Earth and Moon to scale is very powerful.", isTheoretical: false },
+    { exp: 7, base_size: 1.2, label_size: 1.2, label: "Planet Earth", searchTerm: "The Blue Marble", description: "A quintessential image of our home planet, with a diameter of about 12,742 km.", isTheoretical: false },
+    { exp: 6, base_size: 1.0, label_size: 1.2, label: "State of Texas", searchTerm: "texas on a map", description: "Gives a sense of a large political or geographical region within a continent. Its widest point is about 1,244 km.", isTheoretical: false },
+    { exp: 5, base_size: 1.0, label_size: 1.0, label: "Edge of Space", searchTerm: "Karman line view from balloon", description: "The altitude (100 km) where Earth's atmosphere becomes too thin for aeronautics, commonly representing the border of outer space.", isTheoretical: false },
+    { exp: 4, base_size: 1.0, label_size: 8.8, label: "Mount Everest", searchTerm: "Mount Everest from space", description: "The highest point on Earth, representing the scale of a large city or a massive geological feature.", isTheoretical: false },
+    { exp: 3, base_size: 1.0, label_size: 3.0, label: "Airport Runway", searchTerm: "Airport runway aerial view", description: "A distance you can see from end to end, but would take time to walk. The scale of a small town.", isTheoretical: false },
+    { exp: 2, base_size: 1.0, label_size: 1.1, label: "Football Field", searchTerm: "American football field", description: "A standardized length that is instantly recognizable and understood by many people.", isTheoretical: false },
+    { exp: 1, base_size: 1.0, label_size: 0.35, label: "School Bus", searchTerm: "Yellow school bus", description: "A familiar object that helps anchor our sense of scale just above the human level.", isTheoretical: false },
+    { exp: 0, base_size: 2.0, label_size: 1.65, label: "Human", searchTerm: "Irene Kaufmann Settlement, varsity basketball team, Dec. 1929", description: "Our ultimate reference point. Everything is measured as larger or smaller than us.", isTheoretical: false },
+    { exp: -1, base_size: 1.0, label_size: 1.5, label: "Smartphone", searchTerm: "Smartphone in hand", description: "A common object held in the hand, representing the decimeter scale.", isTheoretical: false },
+    { exp: -2, base_size: 1.0, label_size: 1.0, label: "Fingernail", searchTerm: "Fingernail label (enwiki).jpg|Fingernail_label_(enwiki)", description: "A feature of our own bodies that we intuitively understand represents the centimeter scale.", isTheoretical: false },
+    { exp: -3, base_size: 1.0, label_size: 1.0, label: "Grain of Sand", searchTerm: "Pitted sand grains from the Western Desert, Egypt. Pitting is a consequence of wind transportation.", description: "Represents the millimeter scale, on the edge of what we can inspect with the naked eye.", isTheoretical: false },
+    { exp: -4, base_size: 1.0, label_size: 1.0, label: "Human Hair Width", searchTerm: "Human hair electron microscope", description: "The limit of what the naked eye can resolve. We need magnification to see things smaller than this.", isTheoretical: false },
+    { exp: -5, base_size: 1.0, label_size: 1.2, label: "White Blood Cell", searchTerm: "White blood cell scanning electron microscope", description: "A typical animal cell. Represents the microscopic world of biology.", isTheoretical: false },
+    { exp: -6, base_size: 1.0, label_size: 2.0, label: "Bacterium (E. coli)", searchTerm: "Escherichia coli scanning electron micrograph", description: "A single-celled prokaryotic organism, much smaller than our own cells.", isTheoretical: false },
+    { exp: -7, base_size: 1.0, label_size: 1.0, label: "Virus (Influenza)", searchTerm: "Influenza virus TEM", description: "An infectious agent that can only replicate inside living cells. The scale of nanotechnology.", isTheoretical: false },
+    { exp: -8, base_size: 1.0, label_size: 1.0, label: "Cell Membrane Thickness", searchTerm: "Membrana plasmática 3D señalizada en inglés.jpg", description: "The lipid bilayer that encloses all cells, made of large biological molecules.", isTheoretical: false },
+    { exp: -9, base_size: 2.0, label_size: 2.0, label: "DNA Double Helix", searchTerm: "DNA double helix model", description: "The iconic spiral ladder of life. Its diameter is about 2 nanometers.", isTheoretical: false },
+    { exp: -10, base_size: 1.4, label_size: 1.4, label: "Carbon Atom", searchTerm: "Carbon atom schematic", description: "A single atom, with its cloud of electrons. The building block of organic life.", isTheoretical: false },
+    { exp: -14, base_size: 1.7, label_size: 1.7, label: "Atomic Nucleus", searchTerm: "Atomic nucleus diagram", description: "The dense center of an atom, containing protons and neutrons, where almost all the mass is located.", isTheoretical: false },
+    { exp: -15, base_size: 8.4, label_size: 8.4, label: "Proton", searchTerm: "Protons e neutrons.png", description: "A subatomic particle found in the nucleus of every atom, with a positive electric charge.", isTheoretical: false },
+    { exp: -18, base_size: 1.0, label_size: 1.0, label: "Quark / Electron", searchTerm: "A schema that lists and classifies the elementary particles", description: "A fundamental constituent of matter. As far as we can measure, quarks and electrons are point-like with no internal structure.", isTheoretical: true },
+    { exp: -31, base_size: 1.0, label_size: 1.0, label: "Grand Unification Scale", searchTerm: "SWEmCplgUnf2.jpg", description: "The hypothetical scale where the Strong, Weak, and Electromagnetic forces merge into a single unified force.", isTheoretical: true },
+    { exp: -34, base_size: 1.0, label_size: 1.0, label: "Superstring", searchTerm: "Structure of matter (string theorie)", description: "In String Theory, fundamental particles are not points but tiny vibrating strings, with a characteristic length near the Planck scale.", isTheoretical: true },
+    { exp: -35, base_size: 1.6, label_size: 1.6, label: "Planck Length", searchTerm: "A graphic representation of Wheeler's calculations of what quantum reality may look like at the Planck length", description: "The 'pixel' of reality. The shortest possible distance that has any physical meaning, where our current understanding of physics breaks down.", isTheoretical: true }
+].map(s => ({...s, base_size: s.base_size || 1.0, label_size: s.label_size || s.base_size || 1.0 })).sort((a,b) => b.exp - a.exp);
+
+const imageCache = {};
+let imagesLoaded = 0;
+
+async function preloadImages() {
+    const sortedForLoading = [...SCALES].sort((a,b) => a.exp - b.exp);
+    const startIndex = sortedForLoading.findIndex(s => s.exp === 0);
+    
+    const prioritizedQueue = [];
+    let i = 0;
+    let added = new Set();
+
+    while(prioritizedQueue.length < sortedForLoading.length) {
+        let leftIndex = startIndex - i;
+        let rightIndex = startIndex + i;
+
+        if (i === 0) {
+            if(startIndex !== -1 && !added.has(sortedForLoading[startIndex].label)) {
+                prioritizedQueue.push(sortedForLoading[startIndex]);
+                added.add(sortedForLoading[startIndex].label);
+            }
+        } else {
+            if(rightIndex < sortedForLoading.length && !added.has(sortedForLoading[rightIndex].label)) {
+                prioritizedQueue.push(sortedForLoading[rightIndex]);
+                added.add(sortedForLoading[rightIndex].label);
+            }
+             if(leftIndex >= 0 && !added.has(sortedForLoading[leftIndex].label)) {
+                prioritizedQueue.push(sortedForLoading[leftIndex]);
+                added.add(sortedForLoading[leftIndex].label);
+            }
+        }
+        i++;
+    }
+
+    for (const obj of prioritizedQueue) {
+        try {
+            console.log(`Searching for: ${obj.label}`);
+            const imageUrl = await getWikimediaImageUrl(obj.searchTerm);
+
+            if (imageUrl) {
+                const img = new Image();
+                img.crossOrigin = "Anonymous";
+                imageCache[obj.exp] = img;
+
+                img.onload = () => {
+                    console.log(`Loaded: ${obj.label}`);
+                    imagesLoaded++;
+                    requestAnimationFrame(draw);
+                };
+                img.onerror = () => {
+                    console.error(`Failed to load image for: ${obj.label} from URL: ${imageUrl}`);
+                };
+                img.src = imageUrl;
+            }
+        } catch (error) {
+            console.error(`An error occurred while preloading for ${obj.label}:`, error);
+        }
+    }
+}
+
+const infoTitle = document.getElementById("info-title");
+const infoScale = document.getElementById("info-scale");
+const infoDesc = document.getElementById("info-desc");
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    const targetSize = Math.min(canvas.width, canvas.height) / 3;
+    const currentExp = -Math.log10(zoom / targetSize);
+
+    let closestObj = null;
+    let minExpDiff = Infinity;
+
+    const reversedScales = [...SCALES].reverse();
+
+    for (let obj of reversedScales) {
+        let objectScaleInMeters = (obj.base_size || 1.0) * Math.pow(10, obj.exp);
+        let sizeOnScreen = objectScaleInMeters * zoom;
+        
+        const img = imageCache[obj.exp];
+        if (img && img.complete && img.naturalWidth !== 0) {
+            const expDiff = Math.abs(currentExp - obj.exp);
+            
+            const fullOpacityRange = 0.25;
+            const transitionRange = 1.0;
+            const startFade = fullOpacityRange;
+            const endFade = fullOpacityRange + transitionRange;
+
+            let alpha = 0;
+            if (expDiff < startFade) {
+                alpha = 1.0;
+            } else if (expDiff < endFade) {
+                alpha = 1.0 - (expDiff - startFade) / transitionRange;
+            }
+
+            if (alpha > 0) {
+                const aspectRatio = img.naturalWidth / img.naturalHeight;
+                const displayHeight = sizeOnScreen;
+                const displayWidth = displayHeight * aspectRatio;
+
+                if (displayHeight > 0.5 && displayHeight < canvas.height * 5 && displayWidth > 0.5 && displayWidth < canvas.width * 5) {
+                    ctx.globalAlpha = alpha;
+                    ctx.drawImage(img, centerX - displayWidth / 2, centerY - displayHeight / 2, displayWidth, displayHeight);
+                }
+            }
+        }
+        
+        const expDiffForInfo = Math.abs(currentExp - obj.exp);
+        if (expDiffForInfo < minExpDiff) {
+            minExpDiff = expDiffForInfo;
+            closestObj = obj;
+        }
+    }
+    
+    ctx.globalAlpha = 1.0;
+
+    if (closestObj) {
+        infoTitle.textContent = closestObj.label;
+        const actualSize = (closestObj.label_size || closestObj.base_size || 1.0) * Math.pow(10, closestObj.exp);
+        infoScale.innerHTML = `Scale: ${formatSize(actualSize)}`;
+        infoDesc.textContent = closestObj.description;
+        
+        let theoreticalWarning = document.querySelector('.theoretical');
+        if (theoreticalWarning) theoreticalWarning.remove();
+
+        if (closestObj.isTheoretical) {
+            let warning = document.createElement('span');
+            warning.className = 'theoretical';
+            warning.textContent = 'Note: This is a theoretical concept.';
+            infoDesc.parentNode.appendChild(warning);
+        }
+    }
+
+    const displayZoom = zoom /1000;
+    document.getElementById("zoom-display").innerText = `Zoom: ${displayZoom.toExponential(2)}x`;
+}
+
+preloadImages();
+draw();
+
+canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const factor = Math.pow(1.2, -e.deltaY * 0.01);
+    zoom *= factor;
+    zoom = Math.min(Math.max(zoom, zoomMin), zoomMax);
+    requestAnimationFrame(draw);
+}, { passive: false });
+
+window.addEventListener("resize", () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    draw();
+});
+
+</script>
+<script>
+    /* ===========================================
+       Five-tier nested coordinate overlay (add-on)
+       - Keeps your original behavior intact
+       - No lateral movement, zoom-only (uses your `zoom`)
+       - Renders tier content centered, blended with neighbors
+       =========================================== */
+    (function () {
+      // Require existing globals
+      if (typeof canvas === 'undefined' || typeof ctx === 'undefined' || typeof zoom === 'undefined' || typeof draw === 'undefined') {
+        console.warn('[FiveTier] Required globals not found. Insert this AFTER your original script.');
+        return;
+      }
+    
+      // --- Tier sizes (meters) ---
+      const R  = 1e13;               // ~13 orders per tier
+      const S0 = 1.616229e-35;       // Planck length
+      const S  = [S0, S0*R, S0*R**2, S0*R**3, S0*R**4]; // tiers 0..4
+    
+      // --- Utilities using your zoom (pixels per meter) ---
+      function metersPerPixel() { return 1 / zoom; }
+      function toPX(m) { return m * zoom; } // meters → pixels
+    
+      // Pick tier k whose size matches ~targetPixels on screen
+      function chooseTier(mpp, targetPixels = 512) {
+        const targetMeters = mpp * targetPixels;
+        let bestK = 0, bestErr = Infinity;
+        for (let k = 0; k < 5; k++) {
+          const err = Math.abs(Math.log10(targetMeters / S[k]));
+          if (err < bestErr) { bestErr = err; bestK = k; }
+        }
+        return bestK;
+      }
+    
+      // Alphas: only active tier and its immediate neighbors
+      function tierAlphas(activeK, mpp) {
+        const targetMeters = mpp * 512;
+        const a = [0,0,0,0,0];
+        for (let k = 0; k < 5; k++) {
+          const d = Math.abs(Math.log10(targetMeters / S[k])); // orders difference
+          const w = Math.max(0, 1 - d);                        // linear falloff within 1 order
+          a[k] = (Math.abs(k - activeK) <= 1) ? w : 0;
+        }
+        return a;
+      }
+    
+      // --- Drawing helpers (centered) ---
+      function drawCircleMeters(radiusM, lineWidthM, alpha = 1, color = '#88c9ff') {
+        const r = toPX(radiusM);
+        if (r < 0.25 || !isFinite(r)) return;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.arc(canvas.width/2, canvas.height/2, r, 0, Math.PI*2);
+        ctx.lineWidth = Math.max(0.5, toPX(lineWidthM));
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        ctx.restore();
+      }
+    
+      function drawPolylineMeters(points, lineWidthM, alpha = 1, color = '#ffffff') {
+        if (points.length < 2) return;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        const cx = canvas.width/2, cy = canvas.height/2;
+        ctx.moveTo(cx + toPX(points[0].x), cy - toPX(points[0].y));
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(cx + toPX(points[i].x), cy - toPX(points[i].y));
+        }
+        ctx.lineWidth = Math.max(0.5, toPX(lineWidthM));
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        ctx.restore();
+      }
+    
+      function drawGridMeters(stepM, count, lineWidthM, alpha = 1, color = '#555') {
+        const stepPx = toPX(stepM);
+        if (stepPx < 2) return; // avoid overdraw
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.lineWidth = Math.max(0.5, toPX(lineWidthM));
+        ctx.strokeStyle = color;
+        const cx = canvas.width/2, cy = canvas.height/2;
+        const halfN = Math.floor(count/2);
+        for (let i = -halfN; i <= halfN; i++) {
+          const x = cx + i * stepPx;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        for (let j = -halfN; j <= halfN; j++) {
+          const y = cy + j * stepPx;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    
+      // --- Per-tier demo content (local meters, centered at origin) ---
+      function tier0(alpha) {
+        drawGridMeters(S[0] * 50, 21, S[0] * 2, 0.35 * alpha);
+        // tiny spiral
+        const R0 = S[0] * 600, turns = 5, pts = [];
+        for (let t = 0; t <= 1; t += 1/300) {
+          const r = R0 * t, a = turns * 2 * Math.PI * t;
+          pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+        }
+        drawPolylineMeters(pts, S[0]*10, alpha, '#ffd480');
+      }
+    
+      function tier1(alpha) {
+        drawCircleMeters(S[1]*0.2, S[1]*0.01, alpha * 0.6);
+        drawPolylineMeters([{x:-S[1]*0.3,y:0},{x:S[1]*0.3,y:0}], S[1]*0.01, alpha*0.3);
+        drawPolylineMeters([{x:0,y:-S[1]*0.3},{x:0,y:S[1]*0.3}], S[1]*0.01, alpha*0.3);
+      }
+    
+      function tier2(alpha) {
+        drawCircleMeters(S[2]*0.15, S[2]*0.002, alpha);
+        drawCircleMeters(S[2]*0.30, S[2]*0.002, alpha*0.8);
+        drawCircleMeters(S[2]*0.50, S[2]*0.002, alpha*0.6);
+      }
+    
+      function tier3(alpha) {
+        const R3 = S[3]*0.6, turns = 3, pts = [];
+        for (let t = 0; t <= 1; t += 1/600) {
+          const r = R3 * t, a = turns * 2 * Math.PI * t;
+          pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+        }
+        drawPolylineMeters(pts, S[3]*0.002, alpha, '#9ad1ff');
+      }
+    
+      function tier4(alpha) {
+        drawCircleMeters(S[4]*0.48, S[4]*0.003, alpha);
+      }
+    
+      const TierDraw = [tier0, tier1, tier2, tier3, tier4];
+    
+      // --- Overlay renderer, called after your original draw() ---
+      function drawFiveTierOverlay() {
+        const mpp = metersPerPixel();
+        const k = chooseTier(mpp, 512);
+        const alphas = tierAlphas(k, mpp);
+    
+        // Draw from coarse to fine so fine lines sit on top
+        for (let t = 4; t >= 0; t--) {
+          const a = alphas[t];
+          if (a > 0) TierDraw[t](a);
+        }
+    
+        // Optional tiny HUD in-canvas (does not touch your DOM)
+        ctx.save();
+        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.textBaseline = 'bottom';
+        const hud = `5-tier overlay  |  tier ${k}  |  m/px ${mpp.toExponential(2)}`;
+        const metrics = ctx.measureText(hud);
+        ctx.fillText(hud, canvas.width - 12 - metrics.width, 18);
+        ctx.restore();
+      }
+    
+      // --- Wrap your original draw() ---
+      const _origDraw = draw;
+      window.draw = function () {
+        _origDraw();
+        drawFiveTierOverlay();
+      };
+    
+      // Trigger one repaint now that overlay is attached
+      requestAnimationFrame(draw);
+    })();
+</script>
+<script>
+    /* ===========================================
+       Five-tier drawing overlay, additive to your page
+       - Uses your existing globals: canvas, ctx, zoom, draw()
+       - No lateral movement, zoom-only, origin at center
+       - Strokes are stored per tier in local meters
+       =========================================== */
+    (function () {
+      if (typeof canvas === 'undefined' || typeof ctx === 'undefined' || typeof zoom === 'undefined' || typeof draw === 'undefined') {
+        console.warn('[FiveTierDraw] Required globals not found. Insert this AFTER your original script.');
+        return;
+      }
+      
+      canvas.style.touchAction = 'none'; // allow touch/pointer drawing
+    
+      // ---------- Tier sizes in meters ----------
+      const R  = 1e13;
+      const S0 = 1.616229e-35;
+      const S  = [S0, S0*R, S0*R**2, S0*R**3, S0*R**4];
+    
+      function metersPerPixel() { return 1 / zoom; }
+      function toPX(m) { return m * zoom; }
+    
+      // ---------- Stroke store, per tier ----------
+      /** @type {Array<Array<{points:{x:number,y:number}[], widthM:number, color:string}>>} */
+      const STROKES = [[],[],[],[],[]];
+    
+             let currentTier = 2;           // default to Tier 2, planetary
+       let baseBrushWidthPixels = 3;  // base brush width in pixels
+       let drawing = false;
+       let liveStroke = null;
+    
+      function currentBrushWidthM() {
+        // Scale brush width directly with zoom - maintain consistent visual size
+        return baseBrushWidthPixels * metersPerPixel();
+      }
+    
+      // ---------- Input handlers, draw with left mouse ----------
+      function screenToLocalMeters(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        const mpp = metersPerPixel();
+        const dx = (x - canvas.width  / 2) * mpp;
+        const dy = (canvas.height / 2 - y) * mpp;
+        return { x: dx, y: dy };
+      }
+    
+                           canvas.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault(); // NEW: avoid text selection/scroll
+          
+          // Always update tier immediately when starting to draw
+          currentTier = chooseTier(metersPerPixel(), 512);
+
+          drawing = true;
+          canvas.setPointerCapture(e.pointerId);
+          liveStroke = { points: [], widthM: currentBrushWidthM(), color: '#ffffff' };
+          const p = screenToLocalMeters(e.clientX, e.clientY);
+          liveStroke.points.push(p);
+          requestAnimationFrame(draw);
+        });
+    
+             canvas.addEventListener('pointermove', (e) => {
+         if (!drawing || !liveStroke) return;
+         const p = screenToLocalMeters(e.clientX, e.clientY);
+         const last = liveStroke.points[liveStroke.points.length - 1];
+         if (!last || Math.hypot(p.x - last.x, p.y - last.y) > metersPerPixel() * 1.5) {
+           liveStroke.points.push(p);
+           // Always render immediately during drawing, don't throttle
+           requestAnimationFrame(draw);
+         }
+       });
+    
+      function finishStroke(e) {
+        if (!drawing) return;
+        drawing = false;
+        try { canvas.releasePointerCapture(e.pointerId); } catch {}
+        if (liveStroke) {
+          if (liveStroke.points.length === 1) {
+            const p0 = liveStroke.points[0];
+            // add a tiny second point (~0.25 px in meters) so it renders
+            const d = metersPerPixel() * 0.25;
+            liveStroke.points.push({ x: p0.x + d, y: p0.y });
+          }
+          if (liveStroke.points.length > 1) {
+            STROKES[currentTier].push(liveStroke);
+          }
+        }
+        liveStroke = null;
+        requestAnimationFrame(draw);
+      }
+    
+      canvas.addEventListener('pointerup', finishStroke);
+      canvas.addEventListener('pointercancel', finishStroke);
+      canvas.addEventListener('pointerleave', finishStroke);
+    
+      // ---------- Keyboard, tier and brush control ----------
+      window.addEventListener('keydown', (e) => {
+        if (e.key >= '0' && e.key <= '4') {
+          currentTier = parseInt(e.key, 10);
+          liveStroke = null;
+          requestAnimationFrame(draw);
+          return;
+        }
+                 if (e.key === '[') {
+           baseBrushWidthPixels = Math.max(0.5, baseBrushWidthPixels * 0.7);
+           if (liveStroke) liveStroke.widthM = currentBrushWidthM();
+           requestAnimationFrame(draw);
+           return;
+         }
+         if (e.key === ']') {
+           baseBrushWidthPixels = Math.min(20, baseBrushWidthPixels * 1.4);
+           if (liveStroke) liveStroke.widthM = currentBrushWidthM();
+           requestAnimationFrame(draw);
+           return;
+         }
+        if (e.key.toLowerCase() === 'u') {
+          const arr = STROKES[currentTier];
+          if (arr.length) arr.pop();
+          requestAnimationFrame(draw);
+          return;
+        }
+        if (e.key.toLowerCase() === 'c') {
+          STROKES[currentTier] = [];
+          requestAnimationFrame(draw);
+          return;
+        }
+      });
+    
+      // ---------- Rendering helpers ----------
+      function drawPolylineMeters(points, widthM, alpha = 1, color = '#ffffff') {
+        if (!points || points.length < 2) return;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        const cx = canvas.width/2, cy = canvas.height/2;
+        ctx.moveTo(cx + toPX(points[0].x), cy - toPX(points[0].y));
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(cx + toPX(points[i].x), cy - toPX(points[i].y));
+        }
+        ctx.lineWidth = Math.max(0.5, toPX(widthM));
+        ctx.strokeStyle = color;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
+    
+      // Choose active tier based on current pixel scale
+      function chooseTier(mpp, targetPixels = 512) {
+        const targetMeters = mpp * targetPixels;
+        let bestK = 0, bestErr = Infinity;
+        for (let k = 0; k < 5; k++) {
+          const err = Math.abs(Math.log10(targetMeters / S[k]));
+          if (err < bestErr) { bestErr = err; bestK = k; }
+        }
+        return bestK;
+      }
+    
+             function tierAlphas(activeK, mpp) {
+         const targetMeters = mpp * 512;
+         const a = [0,0,0,0,0];
+         for (let k = 0; k < 5; k++) {
+           const d = Math.abs(Math.log10(targetMeters / S[k]));
+           const w = Math.max(0, 1 - d);
+           // Smoother transitions - extend the range slightly
+           a[k] = (Math.abs(k - activeK) <= 1.5) ? w : 0;
+         }
+         return a;
+       }
+    
+             // ---------- Hook into your draw, render strokes after your content ----------
+       const _origDraw = draw;
+       window.draw = function () {
+         _origDraw();
+     
+         const mpp = metersPerPixel();
+         const k = chooseTier(mpp, 512);
+         const alphas = tierAlphas(k, mpp);
+         
+         // Ensure current tier is always valid for drawing
+         if (currentTier < 0 || currentTier >= 5) {
+           currentTier = k;
+         }
+    
+                                   // Draw stored strokes, coarse to fine, then the live stroke on top
+          for (let t = 4; t >= 0; t--) {
+            let a = alphas[t];
+            
+            // Always show strokes with content, even during fast transitions
+            if (a <= 0 && STROKES[t].length > 0) {
+              a = 0.2; // Higher visibility for stored strokes during transitions
+            }
+            
+            if (a <= 0) continue;
+            
+            const list = STROKES[t];
+            for (let i = 0; i < list.length; i++) {
+              const s = list[i];
+              drawPolylineMeters(s.points, s.widthM, a, s.color);
+            }
+            if (t === currentTier && liveStroke && liveStroke.points.length > 1) {
+              drawPolylineMeters(liveStroke.points, liveStroke.widthM, 1, liveStroke.color);
+            }
+          }
+    
+        // Small HUD
+        ctx.save();
+        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.textBaseline = 'bottom';
+                 const hud = `draw: hold left mouse, tier: ${currentTier}, brush: ${baseBrushWidthPixels.toFixed(1)}px, m/px: ${metersPerPixel().toExponential(2)}`;
+        ctx.fillText(hud, 12, canvas.height - 10);
+        ctx.restore();
+      };
+    
+      // Kick one repaint
+      requestAnimationFrame(draw);
+    })();
+</script>
+    
+</body>
+</html>
