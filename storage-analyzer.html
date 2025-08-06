@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drawing Storage Analyzer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 10px;
+            background: #333;
+            border-radius: 4px;
+        }
+        .tier-section {
+            margin: 15px 0;
+            padding: 15px;
+            background: #3a3a3a;
+            border-radius: 6px;
+        }
+        .tier-title {
+            font-weight: bold;
+            color: #00aaff;
+            margin-bottom: 10px;
+        }
+        .stroke-info {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #ccc;
+        }
+        button {
+            background: #00aaff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0088cc;
+        }
+        .summary {
+            background: #4a4a4a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+        .summary h3 {
+            color: #00ff88;
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Drawing Storage Analyzer</h1>
+    
+    <div class="container">
+        <h2>Storage Analysis</h2>
+        <div class="metric">
+            <span>Total Strokes:</span>
+            <span id="total-strokes">0</span>
+        </div>
+        <div class="metric">
+            <span>Total Points:</span>
+            <span id="total-points">0</span>
+        </div>
+        <div class="metric">
+            <span>Raw JSON Size:</span>
+            <span id="json-size">0 bytes</span>
+        </div>
+        <div class="metric">
+            <span>Compressed (gzip):</span>
+            <span id="compressed-size">0 bytes</span>
+        </div>
+        <div class="metric">
+            <span>LocalStorage Space:</span>
+            <span id="localstorage-size">0 bytes</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Per-Tier Breakdown</h2>
+        <div id="tier-breakdown"></div>
+    </div>
+
+    <div class="container">
+        <h2>Sample Data Generation</h2>
+        <p>Generate sample drawing data to see storage requirements:</p>
+        <button onclick="generateSampleData()">Generate Sample Data</button>
+        <button onclick="generateHeavyData()">Generate Heavy Data (1000 strokes)</button>
+        <button onclick="clearData()">Clear Data</button>
+    </div>
+
+    <div class="summary">
+        <h3>Storage Insights</h3>
+        <div id="insights"></div>
+    </div>
+
+    <script>
+        // Simulate the drawing data structure from your main demo
+        const STROKES = [[],[],[],[],[]];
+        
+        function generateSampleData() {
+            // Clear existing data
+            STROKES.forEach(tier => tier.length = 0);
+            
+            // Generate realistic sample data
+            const tiers = [
+                { name: "Planck Scale", strokeCount: 5, avgPoints: 50 },
+                { name: "Atomic Scale", strokeCount: 8, avgPoints: 75 },
+                { name: "Planetary Scale", strokeCount: 12, avgPoints: 100 },
+                { name: "Stellar Scale", strokeCount: 6, avgPoints: 60 },
+                { name: "Galactic Scale", strokeCount: 3, avgPoints: 40 }
+            ];
+            
+            tiers.forEach((tier, tierIndex) => {
+                for (let i = 0; i < tier.strokeCount; i++) {
+                    const points = [];
+                    const pointCount = Math.floor(tier.avgPoints * (0.5 + Math.random()));
+                    
+                    for (let j = 0; j < pointCount; j++) {
+                        points.push({
+                            x: (Math.random() - 0.5) * 1e6,
+                            y: (Math.random() - 0.5) * 1e6
+                        });
+                    }
+                    
+                    STROKES[tierIndex].push({
+                        points: points,
+                        widthM: Math.random() * 0.1,
+                        color: `#${Math.floor(Math.random()*16777215).toString(16)}`
+                    });
+                }
+            });
+            
+            analyzeStorage();
+        }
+        
+        function generateHeavyData() {
+            // Clear existing data
+            STROKES.forEach(tier => tier.length = 0);
+            
+            // Generate heavy data for testing
+            for (let tier = 0; tier < 5; tier++) {
+                for (let i = 0; i < 200; i++) {
+                    const points = [];
+                    const pointCount = 50 + Math.floor(Math.random() * 100);
+                    
+                    for (let j = 0; j < pointCount; j++) {
+                        points.push({
+                            x: (Math.random() - 0.5) * 1e6,
+                            y: (Math.random() - 0.5) * 1e6
+                        });
+                    }
+                    
+                    STROKES[tier].push({
+                        points: points,
+                        widthM: Math.random() * 0.1,
+                        color: `#${Math.floor(Math.random()*16777215).toString(16)}`
+                    });
+                }
+            }
+            
+            analyzeStorage();
+        }
+        
+        function clearData() {
+            STROKES.forEach(tier => tier.length = 0);
+            analyzeStorage();
+        }
+        
+        function analyzeStorage() {
+            const tierNames = ["Planck Scale", "Atomic Scale", "Planetary Scale", "Stellar Scale", "Galactic Scale"];
+            
+            let totalStrokes = 0;
+            let totalPoints = 0;
+            
+            // Calculate totals
+            STROKES.forEach(tier => {
+                totalStrokes += tier.length;
+                tier.forEach(stroke => {
+                    totalPoints += stroke.points.length;
+                });
+            });
+            
+            // Update metrics
+            document.getElementById('total-strokes').textContent = totalStrokes;
+            document.getElementById('total-points').textContent = totalPoints.toLocaleString();
+            
+            // Calculate JSON size
+            const jsonString = JSON.stringify(STROKES);
+            const jsonSize = new Blob([jsonString]).size;
+            document.getElementById('json-size').textContent = formatBytes(jsonSize);
+            
+            // Estimate compressed size (gzip typically achieves 70-80% compression for JSON)
+            const compressedSize = Math.floor(jsonSize * 0.25); // Conservative estimate
+            document.getElementById('compressed-size').textContent = formatBytes(compressedSize);
+            
+            // LocalStorage overhead (JSON.stringify + some metadata)
+            const localStorageSize = jsonSize + 100; // Add some overhead
+            document.getElementById('localstorage-size').textContent = formatBytes(localStorageSize);
+            
+            // Per-tier breakdown
+            const breakdown = document.getElementById('tier-breakdown');
+            breakdown.innerHTML = '';
+            
+            STROKES.forEach((tier, index) => {
+                const tierStrokes = tier.length;
+                const tierPoints = tier.reduce((sum, stroke) => sum + stroke.points.length, 0);
+                const tierSize = new Blob([JSON.stringify(tier)]).size;
+                
+                const tierDiv = document.createElement('div');
+                tierDiv.className = 'tier-section';
+                tierDiv.innerHTML = `
+                    <div class="tier-title">${tierNames[index]}</div>
+                    <div class="stroke-info">
+                        Strokes: ${tierStrokes} | Points: ${tierPoints.toLocaleString()} | Size: ${formatBytes(tierSize)}
+                    </div>
+                `;
+                breakdown.appendChild(tierDiv);
+            });
+            
+            // Generate insights
+            generateInsights(totalStrokes, totalPoints, jsonSize, compressedSize);
+        }
+        
+        function generateInsights(strokes, points, jsonSize, compressedSize) {
+            const insights = document.getElementById('insights');
+            
+            const avgPointsPerStroke = strokes > 0 ? (points / strokes).toFixed(1) : 0;
+            const avgBytesPerStroke = strokes > 0 ? (jsonSize / strokes).toFixed(0) : 0;
+            const avgBytesPerPoint = points > 0 ? (jsonSize / points).toFixed(1) : 0;
+            
+            // Storage limits
+            const localStorageLimit = 5 * 1024 * 1024; // 5MB typical limit
+            const sessionStorageLimit = 5 * 1024 * 1024; // 5MB typical limit
+            
+            let storageStatus = '';
+            if (jsonSize > localStorageLimit) {
+                storageStatus = `<span style="color: #ff6b6b;">⚠️ Exceeds localStorage limit (${formatBytes(localStorageLimit)})</span>`;
+            } else if (jsonSize > localStorageLimit * 0.8) {
+                storageStatus = `<span style="color: #ffa500;">⚠️ Approaching localStorage limit</span>`;
+            } else {
+                storageStatus = `<span style="color: #00ff88;">✅ Well within storage limits</span>`;
+            }
+            
+            insights.innerHTML = `
+                <p><strong>Average Points per Stroke:</strong> ${avgPointsPerStroke}</p>
+                <p><strong>Average Bytes per Stroke:</strong> ${avgBytesPerStroke} bytes</p>
+                <p><strong>Average Bytes per Point:</strong> ${avgBytesPerPoint} bytes</p>
+                <p><strong>Storage Status:</strong> ${storageStatus}</p>
+                <p><strong>Compression Ratio:</strong> ${((1 - compressedSize / jsonSize) * 100).toFixed(1)}%</p>
+                <hr>
+                <p><strong>Storage Recommendations:</strong></p>
+                <ul>
+                    <li>For < 1MB: Use localStorage (fast, persistent)</li>
+                    <li>For 1-10MB: Use IndexedDB (fast, persistent, larger limit)</li>
+                    <li>For > 10MB: Consider server storage or compression</li>
+                </ul>
+            `;
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 bytes';
+            const k = 1024;
+            const sizes = ['bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // Initial analysis
+        analyzeStorage();
+    </script>
+</body>
+</html>

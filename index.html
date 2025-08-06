@@ -756,10 +756,29 @@ window.addEventListener("resize", () => {
         ctx.restore();
       };
     
-      // Kick one repaint
-      requestAnimationFrame(draw);
-    })();
-</script>
+             // Kick one repaint
+       requestAnimationFrame(draw);
+       
+       // Add storage measurement function
+       function measureStorageUsage() {
+         const jsonString = JSON.stringify(STROKES);
+         const size = new Blob([jsonString]).size;
+         const totalStrokes = STROKES.reduce((sum, tier) => sum + tier.length, 0);
+         const totalPoints = STROKES.reduce((sum, tier) => 
+           sum + tier.reduce((tierSum, stroke) => tierSum + stroke.points.length, 0), 0);
+         
+         console.log(`Storage Usage: ${(size / 1024).toFixed(2)} KB`);
+         console.log(`Total Strokes: ${totalStrokes}, Total Points: ${totalPoints}`);
+         console.log(`Avg bytes per stroke: ${totalStrokes > 0 ? (size / totalStrokes).toFixed(0) : 0}`);
+         console.log(`Avg bytes per point: ${totalPoints > 0 ? (size / totalPoints).toFixed(1) : 0}`);
+         
+         return { size, totalStrokes, totalPoints };
+       }
+       
+       // Expose for debugging
+       window.measureStorageUsage = measureStorageUsage;
+     })();
+ </script>
     
 </body>
 </html>
